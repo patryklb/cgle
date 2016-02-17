@@ -1,2 +1,2 @@
 # cgle
-Complex Ginzburg-Landau equation for simulations of exciton-polariton condensates
+Complex Ginzburg-Landau equation for simulating exciton-polariton condensates
