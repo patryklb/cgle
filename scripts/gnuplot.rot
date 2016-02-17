@@ -1,0 +1,21 @@
+# HBB: revised open-ended animation routine. Used to just turn
+# round and round by somewhat large steps. Now, it tumbles
+# back and forth smoothly.
+# If 'limit_iterations' is set to a nonzero value, it'll stop after that
+# many iterations (iteration_count=0 has to be set before this
+# script is called)
+#zrot=(zrot+15)%360
+#xrot=(xrot+17)%180
+#set view (50.+30.*sin(xrot/180.*pi)),60.+45.*sin(zrot/180.*pi)
+
+set title "Wavefunction dynamics"
+set xlabel "x"
+set ylabel "|Psi|"
+
+set xrange [:]
+set yrange [0:1.2]
+plot 'output.txt' using 1:2  index iteration_count w l, 'output.txt' using 1:3  index iteration_count w l
+
+#pause -1
+iteration_count=iteration_count+1
+if ((!limit_iterations) || (iteration_count<=limit_iterations)) reread
