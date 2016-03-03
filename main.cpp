@@ -14,74 +14,82 @@
 using namespace std;
 typedef complex <double> cdouble;
 
-/* Define physical parameters of simulation (point (a, b) in phasespace) */
-double a = 1.2, b = 0.1;
-double g = 1.;
-double beta = 0.00005;
-double R = 1.;
-double gam_r = 1.;
-double g_r = 2. * g;
-double gam_c = b * gam_r;
-double P_th = gam_c * gam_r / R;
-double P = a * P_th;
-double W = 1.0;
-
-/* CGLE-specific values */
-double phi_0 = sqrt((P-P_th)/gam_c);
-double n0 = phi_0 * phi_0;
-double ns = n0 / (P/gam_c - 1);
+/* Define physical parameters of simulation */
+double g = .01;
+double gam_c = 20;
+// parameters below are constant per simulation
+double P = 2;
+double ns = 1;
+double n0 = 1;
+double phi_0 = sqrt(n0);
+double P_th =  gam_c;
 double D = gam_c;
-double eta = (1 + ns / n0) / gam_c;
+double eta = (1 + ns/n0) / gam_c;
 double cgle_var = 4 * D * (eta * eta) / n0;
+double beta = 0.0001;
 
 /* Define numerical parameters of simulation */
 double L = 600;
-double T = 20000;
-//double dx = 0.266667;
-//double dt = 0.005;
- double dx = 0.4;
- double dt = 0.01;
+double T = 500;
+double dx = 0.4;
+double dt = 0.01;
 int Nx = (int) (L / dx);
 int Nt = (int) (T / dt);
-double x0 = -L;
-int freq = 0.02 * T;
+double x0 = -L/2;
+int freq = 0.2 * T;
 int Ns = 2;
 
 /* Some usefull stuff */
 const complex<double> I(0,1);
 const double TWO_PI = M_PI * 2.;
 const double dxx = dx * dx;
-const double thld = 0.8;
+const double thld = 0.6;
 
 /* Noise statistics */
 static cdouble n_mean = 0;
-static cdouble n_var = 0;
+static double n_var = 0;
 
 /* Wigner noise variance */
 double wigner_variance(){
-  return 2 * beta * dt / dx * sqrt(D);
+  return 2 * beta * dt / dx * D;
+}
+
+/* Compute phase difference */
+double phase_diff(double theta1, double theta2){
+	double dth = theta1 - theta2;
+	if (dth > M_PI) dth = dth - TWO_PI;
+	if (dth < -M_PI) dth = dth + TWO_PI;
+
+	return dth;
 }
 
 /* Gaussian noise generation - Natalia's work */
-double gaussian_noise(const double &var)
+double gaussian_noise(double mu, double variance)
 {
-	static bool haveSpare = false;
-	static double rand1, rand2;
+	double sigma = sqrt(variance) / 2;
+	const double epsilon = std::numeric_limits<double>::min();
 
-	if(haveSpare)
-	{
-		haveSpare = false;
-		return sqrt(var * rand1) * sin(rand2);
-	}
+	static double z0, z1;
+	static bool generate;
+	generate = !generate;
 
-	haveSpare = true;
+	if (!generate)
+	   return z1 * sigma + mu;
 
-	rand1 = rand() / ((double) RAND_MAX);
-	if(rand1 < 1e-100) rand1 = 1e-100;
-	rand1 = -2 * log(rand1);
-	rand2 = (rand() / ((double) RAND_MAX)) * TWO_PI;
-	return sqrt(var * rand1) * cos(rand2);
+	double u1, u2;
+	do
+	 {
+	   u1 = rand() * (1.0 / RAND_MAX);
+	   u2 = rand() * (1.0 / RAND_MAX);
+	 }
+	while ( u1 <= epsilon );
+
+	z0 = sqrt(-2.0 * log(u1)) * cos(TWO_PI * u2);
+	z1 = sqrt(-2.0 * log(u1)) * sin(TWO_PI * u2);
+	return z0 * sigma + mu;
 }
+
+
 
 void f(vector<cdouble> &y, const vector<cdouble> &y0) {
   for (int ix = 1; ix < Nx-1; ix++){
@@ -143,9 +151,6 @@ vector<cdouble> corr(vector<cdouble>  &y) {
 
         double i = d - N/2;
 
-        //if (i >= 0) cfn[i] = abs(mean/sum);
-        //else cfn[d+N/2] = abs(mean/sum);
-
         if (i >= 0) cfn[i] = mean/sum;
         else cfn[d+N/2] = mean/sum;
 
@@ -157,23 +162,23 @@ vector<cdouble> corr(vector<cdouble>  &y) {
 
 void n_stats(vector <double> &y_re, vector <double> &y_im){
 
-    //vector <double> stats(2, 0);
+    n_var = 0;
+    n_mean = 0;
 
-    cdouble abs = 0.;
+    cdouble val = 0.;
     cdouble acc = 0.;
     cdouble acc2 = 0.;
 
     int N = y_re.size();
 
-
     for (int i = 0; i < N; i++) {
-        abs = y_re[i] +  I * y_im[i];
-        acc += abs;
-        acc2 += acc * conj(acc);
+        val = y_re[i] +  I * y_im[i];
+	acc = acc + val;
+        acc2 += val * conj(val);
     }
 
-    n_mean = acc / double(N);
-    n_var =  acc2 / double(N) - n_mean * n_mean;
+	n_mean = acc / double(N);
+	n_var = abs((acc2 / double(N)) - n_mean * n_mean);
 }
 
 /**************************************************************/
@@ -197,6 +202,7 @@ int main(){
   vector<double> fluct_total(Nx, 0);
   vector<double> fluct_noise(Nx, 0);
   vector<double> fluct_kinetic(Nx, 0);
+  vector<double> fluct_rhs(Nx, 0);
 
 /* Measurements */
 
@@ -270,7 +276,7 @@ for (int ix = 0; ix < Nx; ix++){
 
   var = wigner_variance();
 
-  psi0[ix] = phi_0 + 0.5 * gaussian_noise(var) + 0.5 * I * gaussian_noise(var);
+  psi0[ix] = phi_0 + 0.5 * gaussian_noise(0, var) + 0.5 * I * gaussian_noise(0, var);
 
 }
 
@@ -365,9 +371,8 @@ for (int ix = 0; ix < Nx; ix++){
       w_x_past[ix] = w_x[ix];
       w_y_past[ix] = w_y[ix];
 
-      w_x[ix] = gaussian_noise(var);
-      w_y[ix] = gaussian_noise(var);
-
+      w_x[ix] = gaussian_noise(0, var);
+      w_y[ix] = gaussian_noise(0, var);
     }
 
     // imposing boundary conditions
@@ -379,8 +384,8 @@ for (int ix = 0; ix < Nx; ix++){
 
     // update condensate state
     for (int ix = 0; ix < Nx; ix++) {
-      psi[ix] = psi0[ix] + (k1[ix] + 2.0 * k2[ix] + 2.0 * k3[ix] + k4[ix]) * dt / 6.0
-	 	+ (w_x[ix] + I * w_y[ix]);
+      psi[ix] = psi0[ix] + (k1[ix] + 2.0 * k2[ix] + 2.0 * k3[ix] + k4[ix]) * dt / 6.0 +
+	 	 (w_x[ix] + I * w_y[ix]);
       psi0[ix] = psi[ix];
 
     }
@@ -400,13 +405,24 @@ for (int ix = 0; ix < Nx; ix++){
         for (int ix = 1; ix < Nx-1; ix++) {
 
             double f_tot = ((abs(psi[ix]) * abs(psi[ix])-n0)/n0);
-            double f_kin =  - eta * (phase[ix+1] - 2 * phase[ix] + phase[ix-1]) / dxx;
+            double f_kin =  - eta * (phase_diff(phase_diff(phase[ix-1], phase[ix]), phase_diff(phase[ix], phase[ix+1]))) / dxx;
             double f_noi = 2 * eta * sqrt(D/n0) * (w_x[ix] - w_x_past[ix]) / dt;
+
+            // kinetic terms
+            //double f_1 = - eta * (phase_diff(phase_diff(phase[ix-1], phase[ix]), phase_diff(phase[ix], phase[ix+1]))) / dxx;
+            //double f_2 = - eta * ((phase_diff(phase_diff(phase[ix-1], phase[ix]), phase_diff(phase[ix], phase[ix+1]))) / dxx * f_tot);
+            //double f_3 = - eta * ((((abs(psi[ix]) * abs(psi[ix])-n0)/n0) * phase_diff(phase[ix], phase[ix+1]) / dx)
+            //                           - (((abs(psi[ix-1]) * abs(psi[ix-1])-n0)/n0) * phase_diff(phase[ix-1], phase[ix]) / dx)) / dx;
 
             fluct_total[ix] = fluct_total[ix] + f_tot * f_tot;
             fluct_kinetic[ix] = fluct_kinetic[ix] + f_kin * f_kin;
             fluct_noise[ix] = fluct_noise[ix] + f_noi * f_noi;
+            fluct_rhs[ix] = fluct_rhs[ix] + f_kin*f_kin + f_noi*f_noi;
+	    
             }
+
+        ostats << it * dt << "\t" << fluct_total[Nx/2] << "\t" << fluct_kinetic[Nx/2] << "\t" << fluct_noise[Nx/2] << "\t" << fluct_rhs[Nx/2] << endl;
+
     }
     // save time step to file
     if (it % freq == 0) {
@@ -427,8 +443,8 @@ for (int ix = 0; ix < Nx; ix++){
 
       // save statistics to file
       no[it] = norm(psi);
-      ostats << tt << "\t" << no[it] << "\t" << real(n_mean) << "\t" << imag(n_mean) << "\t" << real(n_var) << "\t"
-             << imag(n_var) << "\t" << cgle_var << "\t" << endl;
+     // ostats << tt << "\t" << no[it] << "\t" << real(n_mean) << "\t" << imag(n_mean) << "\t" << real(n_var) << "\t"
+       //      << imag(n_var) << "\t" << cgle_var << "\t" << endl;
     }
 
     no[it] = norm(psi);
@@ -456,12 +472,12 @@ for (int ix = 0; ix < Nx; ix++){
   }
 
   /* Save fluctuation information */
-  ofluct << "# x\t total\t kinetic_term\t noise_term\t noise_term_theory" << endl;
+  ofluct << "# x\t total\t kinetic\t noise\t rhs" << endl;
   for (int ix = 0; ix < Nx; ix++) {
     double xx = x0 + ix * dx;
 
-    ofluct << xx << "\t" << fluct_total[ix] / ((1-thld) * Nt) << "\t" << beta * fluct_kinetic[ix] / ((1-thld) * Nt) << "\t"
-           << beta * fluct_noise[ix] / ((1-thld) * Nt) << "\t" << cgle_var * (dt/dx) << endl;
+    ofluct << xx << "\t" << fluct_total[ix] / ((1-thld) * Nt) << "\t" <<  fluct_kinetic[ix] / ((1-thld) * Nt) << "\t"
+           << fluct_noise[ix] / ((1-thld) * Nt) << "\t" << fluct_rhs[ix] / ((1-thld) * Nt) << endl;
   }
 
   time_e = omp_get_wtime();
@@ -469,20 +485,36 @@ for (int ix = 0; ix < Nx; ix++){
   cout << endl << "Simulation ended (t_sim = " << (int) (time / 60)
        << " min " << (int) (time) % 60 << " sec)" << endl;
 
+
+  /* Print info about averaged fluctuations */
+
+  double f_tot = 0;
+  double f_kin = 0;
+  double f_noi = 0;
+  double f_rhs = 0;
+
+  for (int ix = 0; ix < Nx; ix++){
+    f_tot = f_tot + fluct_total[ix] / ((1-thld) * Nt);
+    f_kin = f_kin + fluct_kinetic[ix] / ((1-thld) * Nt);
+    f_noi = f_noi + fluct_noise[ix] / ((1-thld) * Nt);
+    f_rhs = f_rhs + fluct_rhs[ix] / ((1-thld) * Nt);
+  }
+
+  f_tot = f_tot / Nx;
+  f_kin = f_kin / Nx;
+  f_noi = f_noi / Nx;
+  f_rhs = f_rhs / Nx;
+
   ocorr.close();
   ofluct.close();
 
   /* Save simulation information to file*/
     oinfo << "# Physical parameters: " << endl
 	  << "g =\t" << g << endl
-	  << "R =\t" << R << endl
-	  << "gam_r =\t" << gam_r << endl
-	  << "g_r =\t" << g_r << endl
 	  << "gam_c =\t" << gam_c << endl
-      << "beta =\t" << beta << endl
+      	  << "beta =\t" << beta << endl
 	  << "P_th =\t" << P_th << endl
 	  << "P =\t" << P << endl
-	  << "W =\t" << W << endl
 	  << "phi_0 = \t" << phi_0 << endl
 	  << "n_0 = \t" << n0 << endl
 	  << "n_s = \t" << ns << endl
@@ -495,7 +527,11 @@ for (int ix = 0; ix < Nx; ix++){
 	  << "dx =\t" << dx << endl
 	  << "dt =\t" << dt << endl
 	  << "tsim =\t" << (int) (time / 60) << " min "
-	  << (int) (time) % 60 << " sec";
+	  << (int) (time) % 60 << " sec" << endl
+	  << "f_tot =\t" << f_tot << endl
+	  << "f_kin =\t" << f_kin << endl
+	  << "f_noi = \t" << f_noi << endl
+	  << "f_rhs = \t" << f_rhs << endl;
 }
 /**************************************************************************/
 
